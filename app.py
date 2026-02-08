@@ -1,52 +1,47 @@
-# app.py - Debug Stable v1.5 (Force Candlestick)
-
 import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
+import requests
 from datetime import datetime
+import os
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+def send_telegram_message(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    requests.post(url, data=payload, timeout=5)
 
 st.set_page_config(page_title="雲端看盤系統", layout="wide")
 st.title("📈 雲端即時看盤系統")
-st.caption("Version: v1.5.0 - Force Candlestick Debug")
 
-# ===== UI =====
 stock_symbol = st.text_input("輸入股票代號 (例如 2330.TW)", "2330.TW")
+
+st.sidebar.header("技術指標設定")
+show_ma = st.sidebar.checkbox("顯示 MA", value=True)
+ma_periods = st.sidebar.multiselect("MA 週期", [5,10,20,60,120,240], default=[5,10,20])
+show_ema = st.sidebar.checkbox("顯示 EMA", value=True)
+ema_periods = st.sidebar.multiselect("EMA 週期", [5,10,20,60,120,240], default=[5,10,20])
+
 interval = st.selectbox("分時選擇", ["5m","15m","60m","120m","180m","240m"])
 
-st.sidebar.header("技術指標")
-show_ma = st.sidebar.checkbox("顯示 MA", value=True)
-ma_periods = st.sidebar.multiselect("MA 週期", [5,10,20,60], default=[5,10,20])
-show_ema = st.sidebar.checkbox("顯示 EMA", value=True)
-ema_periods = st.sidebar.multiselect("EMA 週期", [5,10,20,60], default=[5,10,20])
+st.text("下載資料中...")
+df = yf.download(stock_symbol, period="60d", interval=interval)
 
-# ===== Download =====
-st.info("📥 下載資料中...")
-df = yf.download(stock_symbol, period="60d", interval=interval, auto_adjust=False)
+# ✅ 關鍵修正：攤平 MultiIndex
+if isinstance(df.columns, pd.MultiIndex):
+    df.columns = df.columns.get_level_values(0)
 
-if df.empty:
-    st.error("⚠️ 查無資料")
-    st.stop()
+df.reset_index(inplace=True)
 
-df = df.reset_index()
-
-# 🔎 Debug：顯示欄位
 st.write("🔎 資料欄位：", df.columns.tolist())
-st.write("🔎 前 5 筆資料：")
 st.dataframe(df.head())
 
-# 自動找時間欄位
-time_col = None
-for col in ["Datetime", "Date"]:
-    if col in df.columns:
-        time_col = col
-        break
-
-if not time_col:
-    st.error(f"找不到時間欄位：{df.columns.tolist()}")
-    st.stop()
-
-# ===== Indicators =====
+# 計算 MA / EMA
 if show_ma:
     for p in ma_periods:
         df[f"MA{p}"] = df["Close"].rolling(p).mean()
@@ -55,44 +50,32 @@ if show_ema:
     for p in ema_periods:
         df[f"EMA{p}"] = df["Close"].ewm(span=p, adjust=False).mean()
 
-# ===== Plot =====
+# ====== 畫圖 ======
 fig = go.Figure()
 
-# 🔥 強制先畫 K 棒（底層）
+# 👉 K 棒（一定會出來）
 fig.add_trace(go.Candlestick(
-    x=df[time_col],
-    open=df["Open"],
-    high=df["High"],
-    low=df["Low"],
-    close=df["Close"],
-    name="K棒",
-    increasing_line_color="red",
-    decreasing_line_color="green"
+    x=df['Datetime'],
+    open=df['Open'],
+    high=df['High'],
+    low=df['Low'],
+    close=df['Close'],
+    name='K棒'
 ))
 
-# 再畫線（上層）
+# MA
 if show_ma:
     for p in ma_periods:
-        fig.add_trace(go.Scatter(
-            x=df[time_col],
-            y=df[f"MA{p}"],
-            mode="lines",
-            name=f"MA{p}"
-        ))
+        fig.add_trace(go.Scatter(x=df['Datetime'], y=df[f"MA{p}"], mode='lines', name=f"MA{p}"))
 
+# EMA
 if show_ema:
     for p in ema_periods:
-        fig.add_trace(go.Scatter(
-            x=df[time_col],
-            y=df[f"EMA{p}"],
-            mode="lines",
-            name=f"EMA{p}"
-        ))
+        fig.add_trace(go.Scatter(x=df['Datetime'], y=df[f"EMA{p}"], mode='lines', name=f"EMA{p}"))
 
-fig.update_layout(
-    xaxis_rangeslider_visible=False,
-    height=750,
-    template="plotly_white"
-)
-
+fig.update_layout(xaxis_rangeslider_visible=False, height=750)
 st.plotly_chart(fig, use_container_width=True)
+
+if st.button("發送 Telegram 測試訊息"):
+    send_telegram_message(f"{stock_symbol} 看盤系統測試訊息 {datetime.now()}")
+    st.success("Telegram 訊息已發送 ✅")
