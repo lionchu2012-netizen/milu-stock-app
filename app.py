@@ -1,4 +1,4 @@
-# app.py - Stable Version with Candlestick (Render OK)
+# app.py - Stable v1.4 (Auto Candlestick Fix)
 
 import streamlit as st
 import pandas as pd
@@ -11,15 +11,15 @@ import os
 st.set_page_config(page_title="雲端看盤系統", layout="wide")
 
 st.title("📈 雲端即時看盤系統")
-st.caption("Version: v1.3.0 - Stable Render + K棒顯示修正版")
+st.caption("Version: v1.4.0 - Auto K棒欄位修正")
 
-# ===== Telegram (環境變數) =====
+# ===== Telegram =====
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        st.warning("Telegram 尚未設定環境變數")
+        st.warning("Telegram 尚未設定")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -41,15 +41,24 @@ interval = st.selectbox("分時選擇", ["5m","15m","60m","120m","180m","240m"])
 
 # ===== Download Data =====
 st.info("📥 下載資料中...")
-try:
-    df = yf.download(stock_symbol, period="60d", interval=interval, auto_adjust=False)
-    df.reset_index(inplace=True)
-except Exception as e:
-    st.error(f"資料下載失敗: {e}")
-    st.stop()
+df = yf.download(stock_symbol, period="60d", interval=interval, auto_adjust=False)
 
 if df.empty:
-    st.error("⚠️ 查無資料，請確認股票代號是否正確")
+    st.error("⚠️ 查無資料")
+    st.stop()
+
+# 👉 把 index 變成欄位
+df = df.reset_index()
+
+# 👉 自動找時間欄位
+time_col = None
+for col in ["Datetime", "Date"]:
+    if col in df.columns:
+        time_col = col
+        break
+
+if not time_col:
+    st.error(f"找不到時間欄位，實際欄位是：{df.columns.tolist()}")
     st.stop()
 
 # ===== Indicators =====
@@ -64,9 +73,9 @@ if show_ema:
 # ===== Plot =====
 fig = go.Figure()
 
-# ✅ 正確 K 棒（X 軸用 Date）
+# ✅ Candlestick 一定畫
 fig.add_trace(go.Candlestick(
-    x=df["Date"],
+    x=df[time_col],
     open=df["Open"],
     high=df["High"],
     low=df["Low"],
@@ -76,11 +85,11 @@ fig.add_trace(go.Candlestick(
 
 if show_ma:
     for p in ma_periods:
-        fig.add_trace(go.Scatter(x=df["Date"], y=df[f"MA{p}"], mode="lines", name=f"MA{p}"))
+        fig.add_trace(go.Scatter(x=df[time_col], y=df[f"MA{p}"], mode="lines", name=f"MA{p}"))
 
 if show_ema:
     for p in ema_periods:
-        fig.add_trace(go.Scatter(x=df["Date"], y=df[f"EMA{p}"], mode="lines", name=f"EMA{p}"))
+        fig.add_trace(go.Scatter(x=df[time_col], y=df[f"EMA{p}"], mode="lines", name=f"EMA{p}"))
 
 fig.update_layout(
     xaxis_rangeslider_visible=False,
